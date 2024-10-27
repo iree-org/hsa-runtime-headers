@@ -61,6 +61,18 @@
 #define HSA_AMD_INTERFACE_VERSION_MAJOR 1
 #define HSA_AMD_INTERFACE_VERSION_MINOR 6
 
+#if defined(__has_attribute)
+#  define AMD_HSA_HAS_ATTRIBUTE(x) __has_attribute(x)
+#else
+#  define AMD_HSA_HAS_ATTRIBUTE(x) 0
+#endif
+#if AMD_HSA_HAS_ATTRIBUTE(always_inline) || \
+    (defined(__GNUC__) && !defined(__clang__))
+#  define AMD_HSA_ALWAYS_INLINE __attribute__((always_inline))
+#else
+#  define AMD_HSA_ALWAYS_INLINE
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -70,22 +82,20 @@ extern "C" {
  */
 
 /**
- * @brief Macro to set a flag within uint8_t[8] types
- * types
+ * @brief Macro to set a flag within uint8_t[8] types.
  */
-static __inline__ __attribute__((always_inline)) void hsa_flag_set64(uint8_t* value,
-                                                                       uint32_t bit) {
+static inline AMD_HSA_ALWAYS_INLINE void hsa_flag_set64(uint8_t* value,
+                                                        uint32_t bit) {
   unsigned int index = bit / 8;
   unsigned int subBit = bit % 8;
   (((uint8_t*)value)[index]) |= (1 << subBit);
 }
 
 /**
- * @brief Macro to use to determine that a flag is set when querying flags within uint8_t[8]
- * types
+ * @brief Macro to use to determine that a flag is set when querying flags within uint8_t[8] types.
  */
-static __inline__ __attribute__((always_inline)) bool hsa_flag_isset64(uint8_t* value,
-                                                                       uint32_t bit) {
+static inline AMD_HSA_ALWAYS_INLINE bool hsa_flag_isset64(uint8_t* value,
+                                                          uint32_t bit) {
   unsigned int index = bit / 8;
   unsigned int subBit = bit % 8;
   return ((uint8_t*)value)[index] & (1 << subBit);
@@ -124,7 +134,7 @@ typedef struct hsa_amd_packet_header_s {
   uint16_t header;
 
   /**
-   *Format of the vendor specific packet.
+   * Format of the vendor specific packet.
    */
   hsa_amd_packet_type8_t AmdFormat;
 
@@ -1156,7 +1166,7 @@ typedef enum {
  * following its memory access model. The actual placement may vary or migrate
  * due to the system's NUMA policy and state, which is beyond the scope of
  * HSA APIs.
- */ 
+ */
 typedef struct hsa_amd_memory_pool_s {
   /**
    * Opaque handle.
@@ -2695,7 +2705,7 @@ typedef enum hsa_amd_svm_attribute_s {
   HSA_AMD_SVM_ATTRIB_ACCESS_QUERY = 0x203,
 } hsa_amd_svm_attribute_t;
 
-// List type for hsa_amd_svm_attributes_set/get. 
+// List type for hsa_amd_svm_attributes_set/get.
 typedef struct hsa_amd_svm_attribute_pair_s {
   // hsa_amd_svm_attribute_t value.
   uint64_t attribute;
