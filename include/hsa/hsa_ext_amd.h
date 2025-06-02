@@ -3,7 +3,7 @@
 // The University of Illinois/NCSA
 // Open Source License (NCSA)
 //
-// Copyright (c) 2014-2024, Advanced Micro Devices, Inc. All rights reserved.
+// Copyright (c) 2014-2025, Advanced Micro Devices, Inc. All rights reserved.
 //
 // Developed by:
 //
@@ -57,21 +57,11 @@
  * - 1.4 - Virtual Memory API
  * - 1.5 - hsa_amd_agent_info: HSA_AMD_AGENT_INFO_MEMORY_PROPERTIES
  * - 1.6 - Virtual Memory API: hsa_amd_vmem_address_reserve_align
+ * - 1.7 - hsa_amd_signal_wait_all
+ * - 1.8 - hsa_amd_memory_get_preferred_copy_engine
  */
 #define HSA_AMD_INTERFACE_VERSION_MAJOR 1
-#define HSA_AMD_INTERFACE_VERSION_MINOR 6
-
-#if defined(__has_attribute)
-#  define AMD_HSA_HAS_ATTRIBUTE(x) __has_attribute(x)
-#else
-#  define AMD_HSA_HAS_ATTRIBUTE(x) 0
-#endif
-#if AMD_HSA_HAS_ATTRIBUTE(always_inline) || \
-    (defined(__GNUC__) && !defined(__clang__))
-#  define AMD_HSA_ALWAYS_INLINE __attribute__((always_inline))
-#else
-#  define AMD_HSA_ALWAYS_INLINE
-#endif
+#define HSA_AMD_INTERFACE_VERSION_MINOR 8
 
 #ifdef __cplusplus
 extern "C" {
@@ -84,18 +74,16 @@ extern "C" {
 /**
  * @brief Macro to set a flag within uint8_t[8] types.
  */
-static inline AMD_HSA_ALWAYS_INLINE void hsa_flag_set64(uint8_t* value,
-                                                        uint32_t bit) {
+static inline void hsa_flag_set64(uint8_t* value, uint32_t bit) {
   unsigned int index = bit / 8;
   unsigned int subBit = bit % 8;
   (((uint8_t*)value)[index]) |= (1 << subBit);
 }
 
 /**
- * @brief Macro to use to determine that a flag is set when querying flags within uint8_t[8] types.
+ * @brief Macro to determine whether a flag is set within uint8_t[8] types.
  */
-static inline AMD_HSA_ALWAYS_INLINE bool hsa_flag_isset64(uint8_t* value,
-                                                          uint32_t bit) {
+static inline bool hsa_flag_isset64(uint8_t* value, uint32_t bit) {
   unsigned int index = bit / 8;
   unsigned int subBit = bit % 8;
   return ((uint8_t*)value)[index] & (1 << subBit);
@@ -116,6 +104,12 @@ typedef enum {
    * queues created from AMD GPU Agents support this packet.
    */
   HSA_AMD_PACKET_TYPE_BARRIER_VALUE = 2,
+  /**
+   * Packet used to send commands to an AIE agent's embedded runtime (ERT). The
+   * ERT is responsible for, among other things, handling dispatches. Only
+   * queues created on AIE agents support this packet.
+   */
+  HSA_AMD_PACKET_TYPE_AIE_ERT = 3
 } hsa_amd_packet_type_t;
 
 /**
@@ -203,6 +197,204 @@ typedef struct hsa_amd_barrier_value_packet_s {
    */
   hsa_signal_t completion_signal;
 } hsa_amd_barrier_value_packet_t;
+
+/**
+ * State of an AIE ERT command.
+ */
+typedef enum {
+  /**
+   * Set by the host before submitting a command to the scheduler.
+   */
+  HSA_AMD_AIE_ERT_STATE_NEW = 1,
+  /**
+   * Internal scheduler state.
+   */
+  HSA_AMD_AIE_ERT_STATE_QUEUED = 2,
+  /**
+   * Internal scheduler state.
+   */
+  HSA_AMD_AIE_ERT_STATE_RUNNING = 3,
+  /**
+   * Set by the scheduler when a command completes.
+   */
+  HSA_AMD_AIE_ERT_STATE_COMPLETED = 4,
+  /**
+   * Set by the scheduler if a command failed.
+   */
+  HSA_AMD_AIE_ERT_STATE_ERROR = 5,
+  /**
+   * Set by the scheduler if a command aborted.
+   */
+  HSA_AMD_AIE_ERT_STATE_ABORT = 6,
+  /**
+   * Internal scheduler state.
+   */
+  HSA_AMD_AIE_ERT_STATE_SUBMITTED = 7,
+  /**
+   * Set by the scheduler on a timeout and reset.
+   */
+  HSA_AMD_AIE_ERT_STATE_TIMEOUT = 8,
+  /**
+   * Set by the scheduler on a timeout and fail to reset.
+   */
+  HSA_AMD_AIE_ERT_STATE_NORESPONSE = 9,
+  HSA_AMD_AIE_ERT_STATE_SKERROR = 10,
+  HSA_AMD_AIE_ERT_STATE_SKCRASHED = 11,
+  HSA_AMD_AIE_ERT_STATE_MAX
+} hsa_amd_aie_ert_state;
+
+/**
+ * Opcode types for HSA AIE ERT commands.
+ */
+typedef enum {
+  /**
+   * Start a workgroup on a compute unit (CU).
+   */
+  HSA_AMD_AIE_ERT_START_CU = 0,
+  /**
+   * Currently aliased to HSA_AMD_AIE_ERT_START_CU.
+   */
+  HSA_AMD_AIE_ERT_START_KERNEL = 0,
+  /**
+   * Configure command scheduler.
+   */
+  HSA_AMD_AIE_ERT_CONFIGURE = 2,
+  HSA_AMD_AIE_ERT_EXIT = 3,
+  HSA_AMD_AIE_ERT_ABORT = 4,
+  /**
+   * Execute a specified CU after writing.
+   */
+  HSA_AMD_AIE_ERT_EXEC_WRITE = 5,
+  /**
+   * Get stats about a CU's execution.
+   */
+  HSA_AMD_AIE_ERT_CU_STAT = 6,
+  /**
+   * Start KDMA CU or P2P.
+   */
+  HSA_AMD_AIE_ERT_START_COPYBO = 7,
+  /**
+   * Configure a soft kernel.
+   */
+  HSA_AMD_AIE_ERT_SK_CONFIG = 8,
+  /**
+   * Start a soft kernel.
+   */
+  HSA_AMD_AIE_ERT_SK_START = 9,
+  /**
+   * Unconfigure a soft kernel.
+   */
+  HSA_AMD_AIE_ERT_SK_UNCONFIG = 10,
+  /**
+   * Initialize a CU.
+   */
+  HSA_AMD_AIE_ERT_INIT_CU = 11,
+  HSA_AMD_AIE_ERT_START_FA = 12,
+  HSA_AMD_AIE_ERT_CLK_CALIB = 13,
+  HSA_AMD_AIE_ERT_MB_VALIDATE = 14,
+  /**
+   * Same as HSA_AMD_AIE_ERT_START_CU but with a key-value pair.
+   */
+  HSA_AMD_AIE_ERT_START_KEY_VAL = 15,
+  HSA_AMD_AIE_ERT_ACCESS_TEST_C = 16,
+  HSA_AMD_AIE_ERT_ACCESS_TEST = 17,
+  /**
+   * Instruction buffer command format.
+   */
+  HSA_AMD_AIE_ERT_START_DPU = 18,
+  /**
+   * Command chain.
+   */
+  HSA_AMD_AIE_ERT_CMD_CHAIN = 19,
+  /**
+   * Instruction buffer command format on NPU.
+   */
+  HSA_AMD_AIE_ERT_START_NPU = 20,
+  /**
+   * Instruction buffer command with pre-emption format on the NPU.
+   */
+  HSA_AMD_AIE_ERT_START_NPU_PREEMPT = 21
+} hsa_amd_aie_ert_cmd_opcode_t;
+
+/**
+ * Payload data for AIE ERT start kernel packets (i.e., when the opcode is
+ * HSA_AMD_AIE_ERT_START_KERNEL).
+ */
+typedef struct hsa_amd_aie_ert_start_kernel_data_s {
+  /**
+   * Address to the PDI.
+   */
+  void* pdi_addr;
+  /**
+   * Opcode, instructions and kernel arguments.
+   */
+  uint32_t data[];
+} hsa_amd_aie_ert_start_kernel_data_t;
+
+/**
+ * AMD AIE ERT packet. Used for sending a command to an AIE agent.
+ */
+typedef struct hsa_amd_aie_ert_packet_s {
+  /**
+   * AMD vendor specific packet header.
+   */
+  hsa_amd_vendor_packet_header_t header;
+  /**
+   * Format for packets interpreted by the ERT to understand the command and
+   * payload data.
+   */
+  struct {
+    /**
+     * Current state of a command.
+     */
+    uint32_t state : 4;
+    /**
+     * Flexible field that can be interpreted on a per-command basis.
+     */
+    uint32_t custom : 8;
+    /**
+     * Number of DWORDs in the payload data.
+     */
+    uint32_t count : 11;
+    /**
+     * Opcode identifying the command.
+     */
+    uint32_t opcode : 5;
+    /**
+     * Type of a command (currently 0).
+     */
+    uint32_t type : 4;
+  };
+  /**
+   * Reserved. Must be 0.
+   */
+  uint64_t reserved0;
+  /**
+   * Reserved. Must be 0.
+   */
+  uint64_t reserved1;
+  /**
+   * Reserved. Must be 0.
+   */
+  uint64_t reserved2;
+  /**
+   * Reserved. Must be 0.
+   */
+  uint64_t reserved3;
+  /**
+   * Reserved. Must be 0.
+   */
+  uint64_t reserved4;
+  /**
+   * Reserved. Must be 0.
+   */
+  uint64_t reserved5;
+  /**
+   * Address of packet data payload. ERT commands contain arbitrarily sized
+   * data payloads.
+   */
+  uint64_t payload_data;
+} hsa_amd_aie_ert_packet_t;
 
 /** @} */
 
@@ -467,7 +659,26 @@ typedef enum hsa_amd_agent_info_s {
    * bit is set at that position. User may use the hsa_flag_isset64 macro to verify whether a flag
    * is set. The type of this attribute is uint8_t[8].
    */
-  HSA_AMD_AGENT_INFO_AQL_EXTENSIONS = 0xA115 /* Not implemented yet */
+  HSA_AMD_AGENT_INFO_AQL_EXTENSIONS = 0xA115, /* Not implemented yet */
+  /**
+   * Maximum allowed value in bytes for scratch limit for this agent. This amount
+   * is shared accross all queues created on this agent.
+   * The type of this attribute is uint64_t.
+   */
+  HSA_AMD_AGENT_INFO_SCRATCH_LIMIT_MAX = 0xA116,
+  /**
+   * Current scratch limit threshold in bytes for this agent. This limit can be
+   * modified using the hsa_amd_agent_set_async_scratch_limit call.
+   * - AQL dispatches that require scratch-memory above this threshold will trigger a
+   *   scratch use-once.
+   * - AQL dispatches using less scratch-memory than this threshold, ROCr will
+   *   permanently assign the allocated scratch memory to the queue handling the dispatch.
+   *   This memory can be reclaimed by calling hsa_amd_agent_set_async_scratch_limit
+   *   with a lower threshold by current value.
+   *
+   * The type of this attribute is uint64_t.
+   */
+  HSA_AMD_AGENT_INFO_SCRATCH_LIMIT_CURRENT = 0xA117
 } hsa_amd_agent_info_t;
 
 /**
@@ -507,7 +718,11 @@ typedef struct hsa_amd_hdp_flush_s {
 /**
  * @brief Region attributes.
  */
+#ifdef __cplusplus
+typedef enum hsa_amd_region_info_s : int {
+#else
 typedef enum hsa_amd_region_info_s {
+#endif
   /**
    * Determine if host can access the region. The type of this attribute
    * is bool.
@@ -917,13 +1132,31 @@ hsa_status_t HSA_API
                                  hsa_amd_signal_handler handler, void* arg);
 
 /**
+ * @brief Wait for all signal-condition pairs to be satisfied.
+ *
+ * @details Allows waiting for all of several signal and condition pairs to be
+ * satisfied. The function returns 0 if all signals met their conditions and -1
+ * on a timeout. The value of each signal's satisfying value is returned in
+ * satisfying_value unless satisfying_value is nullptr. NULL and invalid signals
+ * are considered to have value 0 and their conditions already satisfied. This
+ * function provides only relaxed memory semantics.
+ */
+uint32_t HSA_API hsa_amd_signal_wait_all(uint32_t signal_count, hsa_signal_t* signals,
+                                         hsa_signal_condition_t* conds, hsa_signal_value_t* values,
+                                         uint64_t timeout_hint, hsa_wait_state_t wait_hint,
+                                         hsa_signal_value_t* satisfying_values);
+
+/**
  * @brief Wait for any signal-condition pair to be satisfied.
  *
  * @details Allows waiting for any of several signal and conditions pairs to be
  * satisfied. The function returns the index into the list of signals of the
- * first satisfying signal-condition pair. The value of the satisfying signal's
- * value is returned in satisfying_value unless satisfying_value is NULL. This
- * function provides only relaxed memory semantics.
+ * first satisfying signal-condition pair. The function returns
+ * std::numeric_limits<uint32_t>::max() if no valid signal is provided. The value
+ * of the satisfying signal's value is returned in satisfying_value, unless
+ * satisfying_value is nullptr or there's no valid signal in the signal-condition
+ * pairs. NULL and invalid signals are ignored. This function provides only
+ * relaxed memory semantics.
  */
 uint32_t HSA_API
     hsa_amd_signal_wait_any(uint32_t signal_count, hsa_signal_t* signals,
@@ -1307,6 +1540,10 @@ typedef enum hsa_amd_memory_pool_flag_s {
    *  Allocates physically contiguous memory
    */
   HSA_AMD_MEMORY_POOL_CONTIGUOUS_FLAG = (1 << 1),
+  /**
+   *  Allocates executable memory
+   */
+  HSA_AMD_MEMORY_POOL_EXECUTABLE_FLAG = (1 << 2),
 
 } hsa_amd_memory_pool_flag_t;
 
@@ -1539,8 +1776,26 @@ hsa_status_t HSA_API
  * dst_agent == src_agent is generally used for shader copies.
  */
 hsa_status_t HSA_API
-    hsa_amd_memory_copy_engine_status(hsa_agent_t dst_agent, hsa_agent_t src_agent,
+hsa_amd_memory_copy_engine_status(hsa_agent_t dst_agent, hsa_agent_t src_agent,
                                       uint32_t *engine_ids_mask);
+ /**
+ * @brief Returns the preferred SDMA engine mask.
+ *
+ * @param[in] dst_agent Destination agent of copy status direction.
+ *
+ * @param[in] src_agent Source agent of copy status direction.
+ *
+ * @param[out] recommended_ids_mask returns available SDMA engine IDs for max bandwidth
+ * that can be masked with hsa_amd_sdma_engine_id_t. Can be 0 if there is no preference
+ *
+ * @retval ::HSA_STATUS_SUCCESS For mask returned
+ *
+ * @retval ::HSA_STATUS_ERROR_INVALID_AGENT dst_agent and src_agent are the same as
+ * dst_agent == src_agent is generally used for shader copies.
+ */
+hsa_status_t HSA_API
+hsa_amd_memory_get_preferred_copy_engine(hsa_agent_t dst_agent, hsa_agent_t src_agent,
+                                         uint32_t* recommended_ids_mask);
 
 /*
 [Provisional API]
@@ -2069,7 +2324,11 @@ typedef enum {
   /*
   Memory has been shared with the local process via ROCr IPC APIs.
   */
-  HSA_EXT_POINTER_TYPE_IPC = 4
+  HSA_EXT_POINTER_TYPE_IPC = 4,
+  /*
+  No backend memory but virtual address
+  */
+  HSA_EXT_POINTER_TYPE_RESERVED_ADDR = 5
 } hsa_amd_pointer_type_t;
 
 /**
@@ -2545,6 +2804,32 @@ typedef enum hsa_amd_queue_priority_s {
  */
 hsa_status_t HSA_API hsa_amd_queue_set_priority(hsa_queue_t* queue,
                                                 hsa_amd_queue_priority_t priority);
+
+/**
+ * @brief Queue creation attributes.
+ */
+typedef enum {
+  /**
+   * The queue's packet buffer and queue descriptor struct should be
+   * allocated in system memory (default). Mutually exclusive with
+   * HSA_AMD_QUEUE_CREATE_DEVICE_MEM_RING_BUF and
+   * HSA_AMD_QUEUE_CREATE_DEVICE_MEM_QUEUE_DESCRIPTOR.
+   */
+  HSA_AMD_QUEUE_CREATE_SYSTEM_MEM = 0,
+  /**
+   * The queue's packet buffer should be allocated in the agent's
+   * fine-grain device memory region.
+   */
+  HSA_AMD_QUEUE_CREATE_DEVICE_MEM_RING_BUF = (1 << 0),
+  /**
+   * The queue desciptor struct should be allocated in the agent's
+   * fine-grain device memory region. Not supported for devices
+   * connected via PCIe because the CPU's atomic read-modify-write
+   * operations cannot be promoted to PCIe atomic read-modify-write
+   * operations.
+   */
+  HSA_AMD_QUEUE_CREATE_DEVICE_MEM_QUEUE_DESCRIPTOR = (1 << 1),
+} hsa_amd_queue_create_flag_t;
 
 /** @} */
 
@@ -3103,8 +3388,9 @@ typedef struct hsa_amd_memory_access_desc_s {
  *
  * Make previously mapped virtual address accessible to specific agents. @p size must be equal to
  * size of previously mapped virtual memory handle.
- * Calling hsa_amd_vmem_set_access multiple times on the same @p va will overwrite previous
- * permissions for all agents
+ * Calling hsa_amd_vmem_set_access multiple times on the same @p va:
+ *  - Will overwrite permissions for agents specified in @p desc
+ *  - Will leave permissions unchanged for agents not specified in @p desc
  *
  * @param[in] va previously mapped virtual address
  * @param[in] size of memory mapping
@@ -3239,6 +3525,10 @@ hsa_status_t hsa_amd_vmem_get_alloc_properties_from_handle(
  * Increasing this threshold will only increase the internal limit and not cause immediate allocation
  * of additional scratch memory. Decreasing this threshold will result in a release in scratch memory
  * on queues where the current amount of allocated scratch exceeds the new limit.
+ *
+ * If this API call would result in a release in scratch memory and there are dispatches that are
+ * currently using scratch memory on this agent, this will result into a blocking call until the
+ * current dispatches are completed.
  *
  * This API is only supported on devices that support asynchronous scratch reclaim.
  *
