@@ -59,9 +59,15 @@
  * - 1.6 - Virtual Memory API: hsa_amd_vmem_address_reserve_align
  * - 1.7 - hsa_amd_signal_wait_all
  * - 1.8 - hsa_amd_memory_get_preferred_copy_engine
+ * - 1.9 - hsa_amd_portable_export_dmabuf_v2
+ * - 1.10 - hsa_amd_vmem_address_reserve: HSA_AMD_VMEM_ADDRESS_NO_REGISTER
+ * - 1.11 - hsa_amd_agent_info_t: HSA_AMD_AGENT_INFO_CLOCK_COUNTERS
+ * - 1.12 - hsa_amd_pointer_info: HSA_EXT_POINTER_TYPE_HSA_VMEM and HSA_EXT_POINTER_TYPE_RESERVED_ADDR
+ * - 1.13 - hsa_amd_pointer_info: Added new registered field to hsa_amd_pointer_info_t
+ * - 1.14 - hsa_amd_ais_file_write, hsa_amd_ais_file_read
  */
 #define HSA_AMD_INTERFACE_VERSION_MAJOR 1
-#define HSA_AMD_INTERFACE_VERSION_MINOR 8
+#define HSA_AMD_INTERFACE_VERSION_MINOR 14
 
 #ifdef __cplusplus
 extern "C" {
@@ -446,6 +452,11 @@ enum {
    * Resource is busy or temporarily unavailable
    */
   HSA_STATUS_ERROR_RESOURCE_BUSY = 46,
+
+  /**
+   * Request is not supported by this system
+   */
+  HSA_STATUS_ERROR_NOT_SUPPORTED = 47,
 };
 
 /** @} */
@@ -468,6 +479,16 @@ typedef enum {
    */
   HSA_IOMMU_SUPPORT_V2 = 1,
 } hsa_amd_iommu_version_t;
+
+/**
+ * @brief Structure containing information on the agent's clock counters.
+ */
+typedef struct hsa_amd_clock_counters_s {
+  uint64_t gpu_clock_counter;
+  uint64_t cpu_clock_counter;
+  uint64_t system_clock_counter;
+  uint64_t system_clock_frequency;
+} hsa_amd_clock_counters_t;
 
 /**
  * @brief Agent attributes.
@@ -678,7 +699,12 @@ typedef enum hsa_amd_agent_info_s {
    *
    * The type of this attribute is uint64_t.
    */
-  HSA_AMD_AGENT_INFO_SCRATCH_LIMIT_CURRENT = 0xA117
+  HSA_AMD_AGENT_INFO_SCRATCH_LIMIT_CURRENT = 0xA117,
+  /**
+   * Queries the driver for clock counters of the agent.
+   * The type of this attribute is hsa_amd_clock_counters_t.
+   */
+  HSA_AMD_AGENT_INFO_CLOCK_COUNTERS = 0xA118
 } hsa_amd_agent_info_t;
 
 /**
@@ -759,6 +785,17 @@ typedef enum hsa_amd_coherency_type_s {
 } hsa_amd_coherency_type_t;
 
 
+/**
+ * @brief dmabuf attributes
+ */
+#ifdef __cplusplus
+typedef enum hsa_amd_dma_buf_mapping_type_s : int {
+#else
+typedef enum hsa_amd_dma_buf_mapping_type_s {
+#endif
+  HSA_AMD_DMABUF_MAPPING_TYPE_NONE = 0,
+  HSA_AMD_DMABUF_MAPPING_TYPE_PCIE = 1
+} hsa_amd_dma_buf_mapping_type_t;
 /**
  * @brief Get the coherency type of the fine grain region of an agent.
  *
@@ -1544,7 +1581,10 @@ typedef enum hsa_amd_memory_pool_flag_s {
    *  Allocates executable memory
    */
   HSA_AMD_MEMORY_POOL_EXECUTABLE_FLAG = (1 << 2),
-
+  /**
+   *  Allocates uncached memory
+   */
+  HSA_AMD_MEMORY_POOL_UNCACHED_FLAG = (1 << 3),
 } hsa_amd_memory_pool_flag_t;
 
 /**
@@ -1772,8 +1812,6 @@ hsa_status_t HSA_API
  *
  * @retval ::HSA_STATUS_ERROR_OUT_OF_RESOURCES Agent does not have available SDMA engines.
  *
- * @retval ::HSA_STATUS_ERROR_INVALID_AGENT dst_agent and src_agent are the same as
- * dst_agent == src_agent is generally used for shader copies.
  */
 hsa_status_t HSA_API
 hsa_amd_memory_copy_engine_status(hsa_agent_t dst_agent, hsa_agent_t src_agent,
@@ -1790,8 +1828,6 @@ hsa_amd_memory_copy_engine_status(hsa_agent_t dst_agent, hsa_agent_t src_agent,
  *
  * @retval ::HSA_STATUS_SUCCESS For mask returned
  *
- * @retval ::HSA_STATUS_ERROR_INVALID_AGENT dst_agent and src_agent are the same as
- * dst_agent == src_agent is generally used for shader copies.
  */
 hsa_status_t HSA_API
 hsa_amd_memory_get_preferred_copy_engine(hsa_agent_t dst_agent, hsa_agent_t src_agent,
@@ -2328,7 +2364,11 @@ typedef enum {
   /*
   No backend memory but virtual address
   */
-  HSA_EXT_POINTER_TYPE_RESERVED_ADDR = 5
+  HSA_EXT_POINTER_TYPE_RESERVED_ADDR = 5,
+  /*
+  Memory was allocated with an HSA virtual memory allocator
+  */
+  HSA_EXT_POINTER_TYPE_HSA_VMEM = 6
 } hsa_amd_pointer_type_t;
 
 /**
@@ -2383,6 +2423,13 @@ typedef struct hsa_amd_pointer_info_s {
   meaningful if the type of the allocation is HSA_EXT_POINTER_TYPE_UNKNOWN.
   */
   uint32_t global_flags;
+
+  /*
+  Set to true if this allocation was registered with the underlying driver
+  This field is not meaningful if the type of the allocation is
+  HSA_EXT_POINTER_TYPE_UNKNOWN.
+  */
+  bool registered;
 } hsa_amd_pointer_info_t;
 
 /**
@@ -3119,7 +3166,7 @@ hsa_status_t hsa_amd_spm_release(hsa_agent_t preferred_agent);
  *
  * @param[in] size_in_bytes size of the buffer
  *
- * @param[in/out] timeout timeout in milliseconds
+ * @param[in,out] timeout timeout in milliseconds
  *
  * @param[out] size_copied number of bytes copied
  *
@@ -3138,21 +3185,10 @@ hsa_status_t hsa_amd_spm_set_dest_buffer(hsa_agent_t preferred_agent, size_t siz
  */
 
 /**
- * @brief Obtains an OS specific, vendor neutral, handle to a memory allocation.
+ * @brief Older version of export dmabuf
  *
- * Obtains an OS specific handle to GPU agent memory.  The memory must be part
- * of a single allocation from an hsa_amd_memory_pool_t exposed by a GPU Agent.
- * The handle may be used with other APIs (e.g. Vulkan) to obtain shared access
- * to the allocation.
- *
- * Shared access to the memory is not guaranteed to be fine grain coherent even
- * if the allocation exported is from a fine grain pool.  The shared memory
- * consistency model will be no stronger than the model exported from, consult
- * the importing API to determine the final consistency model.
- *
- * The allocation's memory remains valid as long as the handle and any mapping
- * of the handle remains valid.  When the handle and all mappings are closed
- * the backing memory will be released for reuse.
+ * This is the same as calling the v2 version of export dmabuf with the
+ * flags argument set to HSA_AMD_DMABUF_MAPPING_TYPE_NONE.
  *
  * @param[in] ptr Pointer to the allocation being exported.
  *
@@ -3185,6 +3221,56 @@ hsa_status_t hsa_amd_spm_set_dest_buffer(hsa_agent_t preferred_agent, size_t siz
 hsa_status_t hsa_amd_portable_export_dmabuf(const void* ptr, size_t size, int* dmabuf,
                                             uint64_t* offset);
 
+                                            /**
+ * @brief Obtains an OS specific, vendor neutral, handle to a memory allocation.
+ *
+ * Obtains an OS specific handle to GPU agent memory.  The memory must be part
+ * of a single allocation from an hsa_amd_memory_pool_t exposed by a GPU Agent.
+ * The handle may be used with other APIs (e.g. Vulkan) to obtain shared access
+ * to the allocation.
+ *
+ * Shared access to the memory is not guaranteed to be fine grain coherent even
+ * if the allocation exported is from a fine grain pool.  The shared memory
+ * consistency model will be no stronger than the model exported from, consult
+ * the importing API to determine the final consistency model.
+ *
+ * The allocation's memory remains valid as long as the handle and any mapping
+ * of the handle remains valid.  When the handle and all mappings are closed
+ * the backing memory will be released for reuse.
+ *
+ * @param[in] ptr Pointer to the allocation being exported.
+ *
+ * @param[in] size Size in bytes to export following @p ptr.  The entire range
+ * being exported must be contained within a single allocation.
+ *
+ * @param[out] dmabuf Pointer to a dma-buf file descriptor holding a reference to the
+ * allocation.  Contents will not be altered in the event of failure.
+ *
+ * @param[out] offset Offset in bytes into the memory referenced by the dma-buf
+ * object at which @p ptr resides.  Contents will not be altered in the event
+ * of failure.
+ *
+ * @param[in] flags Bitmask of hsa_amd_dma_buf_mapping_type_t flags.
+ *
+ * @retval ::HSA_STATUS_SUCCESS Export completed successfully.
+ *
+ * @retval ::HSA_STATUS_ERROR_NOT_INITIALIZED The HSA runtime has not been
+ * initialized.
+ *
+ * @retval ::HSA_STATUS_ERROR_INVALID_ARGUMENT One or more arguments is NULL.
+ *
+ * @retval ::HSA_STATUS_ERROR_INVALID_ALLOCATION The address range described by
+ * @p ptr and @p size are not contained within a single allocation.
+ *
+ * @retval ::HSA_STATUS_ERROR_INVALID_AGENT The allocation described by @p ptr
+ * and @p size was allocated on a device which can not export memory.
+ *
+ * @retval ::HSA_STATUS_ERROR_OUT_OF_RESOURCES The return file descriptor,
+ * @p dmabuf, could not be created.
+ */
+hsa_status_t hsa_amd_portable_export_dmabuf_v2(const void* ptr, size_t size,
+                               int* dmabuf, uint64_t* offset, uint64_t flags);
+
 /**
  * @brief Closes an OS specific, vendor neutral, handle to a memory allocation.
  *
@@ -3208,6 +3294,11 @@ hsa_status_t hsa_amd_portable_export_dmabuf(const void* ptr, size_t size, int* d
  */
 hsa_status_t hsa_amd_portable_close_dmabuf(int dmabuf);
 
+typedef enum hsa_amd_vmem_address_reserve_flag_s {
+  // Only reserve a VA range without registering it to the underlying driver
+  HSA_AMD_VMEM_ADDRESS_NO_REGISTER = (1UL << 0),
+} hsa_amd_vmem_address_reserve_flag_t;
+
 /**
  * @brief Allocate a reserved address range
  *
@@ -3219,7 +3310,7 @@ hsa_status_t hsa_amd_portable_close_dmabuf(int dmabuf);
  * @param[out] va virtual address allocated
  * @param[in] size of address range requested
  * @param[in] address requested
- * @param[in] flags currently unsupported
+ * @param[in] flags optional hsa_amd_vmem_address_reserve_flag_t
  *
  * @retval ::HSA_STATUS_SUCCESS Address range allocated successfully
  *
@@ -3247,7 +3338,7 @@ hsa_status_t hsa_amd_vmem_address_reserve(void** va, size_t size, uint64_t addre
  * @param[in] size of address range requested
  * @param[in] address requested
  * @param[in] alignment requested. 0 for default. Must be >= page-size and a power of 2
- * @param[in] flags currently unsupported
+ * @param[in] flags optional hsa_amd_vmem_address_reserve_flag_t
  *
  * @retval ::HSA_STATUS_SUCCESS Address range allocated successfully
  *
@@ -3564,12 +3655,106 @@ typedef enum {
 hsa_status_t hsa_amd_queue_get_info(hsa_queue_t* queue, hsa_queue_info_attribute_t attribute,
                                     void* value);
 
+typedef struct hsa_amd_ais_file_handle_s {
+  /*
+   * file handle for AIS read & write. Linux will use fd.
+   * pad is keep the size consistent accross different platforms.
+   */
+  union {
+    void*      handle;
+    int        fd;
+    uint8_t    pad[8];
+  };
+} hsa_amd_ais_file_handle_t;
+
+/**
+ * @brief Write data from device memory to a file
+ *
+ * Writes data from device memory buffer to a file at the specified offset.
+ * The device memory pointer must be accessible from the host and point to
+ * a valid allocation.
+ *
+ * EXPERIMENTAL: AIS read and write calls are currently in experimental phase and
+ *  APIs may be modified
+ *
+ * @param[in] handle Handle of the file to write to.
+ *
+ * @param[in] devicePtr Device memory buffer pointer containing data to write.
+ *
+ * @param[in] size Size in bytes of the data to write.
+ *
+ * @param[in] file_offset Offset in bytes into the file where data will be written.
+ *
+ * @param[in/out] size_copied Actual number of bytes copied
+ *
+ * @param[in/out] status Additional status if any
+ *
+ * @retval ::HSA_STATUS_SUCCESS The function has been executed successfully.
+ *
+ * @retval ::HSA_STATUS_ERROR_NOT_INITIALIZED The HSA runtime has not been
+ * initialized.
+ *
+ * @retval ::HSA_STATUS_ERROR_INVALID_ARGUMENT @p fd is invalid, @p devicePtr
+ * is NULL, or @p size is 0.
+ *
+ * @retval ::HSA_STATUS_ERROR_INVALID_ALLOCATION @p devicePtr does not refer to
+ * a valid allocation.
+ *
+ * @retval ::HSA_STATUS_ERROR An error occurred during the write operation.
+ */
+hsa_status_t HSA_API hsa_amd_ais_file_write(hsa_amd_ais_file_handle_t handle, void *devicePtr,
+                                            uint64_t size, int64_t file_offset,
+                                            uint64_t *size_copied, int32_t *status);
+
+/**
+ * @brief Read data from a file to device memory
+ *
+ * Reads data from a file at the specified offset into a device memory buffer.
+ * The device memory pointer must be accessible from the host and point to
+ * a valid allocation.
+ *
+ * EXPERIMENTAL: AIS read and write calls are currently in experimental phase and
+ *  APIs may be modified
+ * @param[in] hanlde Handle of the file to read from.
+ *
+ * @param[in] devicePtr Device memory buffer pointer to store the read data.
+ *
+ * @param[in] size Size in bytes of the data to read.
+ *
+ * @param[in] file_offset Offset in bytes into the file where data will be read from.
+ *
+ * @param[in/out] size_copied Actual number of bytes copied
+ *
+ * @param[in/out] status Additional status if any
+ *
+ * @retval ::HSA_STATUS_SUCCESS The function has been executed successfully.
+ *
+ * @retval ::HSA_STATUS_ERROR_NOT_INITIALIZED The HSA runtime has not been
+ * initialized.
+ *
+ * @retval ::HSA_STATUS_ERROR_INVALID_ARGUMENT @p fd is invalid, @p devicePtr
+ * is NULL, or @p size is 0.
+ *
+ * @retval ::HSA_STATUS_ERROR_INVALID_ALLOCATION @p devicePtr does not refer to
+ * a valid allocation.
+ *
+ * @retval ::HSA_STATUS_ERROR An error occurred during the read operation.
+ */
+hsa_status_t HSA_API hsa_amd_ais_file_read(hsa_amd_ais_file_handle_t handle, void *devicePtr,
+                                           uint64_t size, int64_t file_offset,
+                                           uint64_t *size_copied, int32_t *status);
+
 /**
  * @brief logging types
  */
 typedef enum hsa_amd_log_flag_s {
-   /* Log AQL packets internally enqueued by HSA for Blit Kernels */
+  /* Log AQL packets internally enqueued by ROCr */
   HSA_AMD_LOG_FLAG_BLIT_KERNEL_PKTS = 0,
+  HSA_AMD_LOG_FLAG_AQL = 0,
+  /* Log SDMA packets */
+  HSA_AMD_LOG_FLAG_SDMA = 1,
+  /* Log INFO */
+  HSA_AMD_LOG_FLAG_INFO = 2,
 } hsa_amd_log_flag_t;
 
 /**
